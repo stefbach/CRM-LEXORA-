@@ -13,11 +13,15 @@ import {
   Crosshair,
   PhoneCall,
   Send,
+  Megaphone,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { href: "/", label: "Tableau de bord", icon: LayoutDashboard },
+  { href: "/campagnes", label: "Campagnes", icon: Megaphone },
+  { href: "/groupes", label: "Groupes", icon: Layers },
   { href: "/prospects", label: "Prospects", icon: Crosshair },
   { href: "/appels", label: "Appels", icon: PhoneCall },
   { href: "/emails", label: "Emails", icon: Send },

@@ -65,10 +65,12 @@ export function ProspectDrawer({
   prospect,
   onClose,
   initialTab = "email",
+  campaignId = null,
 }: {
   prospect: Prospect | null;
   onClose: () => void;
   initialTab?: "email" | "call";
+  campaignId?: string | null;
 }) {
   const [tab, setTab] = useState<"email" | "call">(initialTab);
 
@@ -106,9 +108,9 @@ export function ProspectDrawer({
 
         <div className="flex-1 overflow-y-auto p-5">
           {tab === "email" ? (
-            <EmailComposer prospect={prospect} />
+            <EmailComposer prospect={prospect} campaignId={campaignId} />
           ) : (
-            <CallPanel prospect={prospect} />
+            <CallPanel prospect={prospect} campaignId={campaignId} />
           )}
         </div>
       </aside>
@@ -223,7 +225,13 @@ function DrawerHeader({
   );
 }
 
-function EmailComposer({ prospect }: { prospect: Prospect }) {
+function EmailComposer({
+  prospect,
+  campaignId = null,
+}: {
+  prospect: Prospect;
+  campaignId?: string | null;
+}) {
   const templates = emailTemplates[prospect.channel];
   const [templateId, setTemplateId] = useState(templates[0].id);
   const template = useMemo(
@@ -252,6 +260,7 @@ function EmailComposer({ prospect }: { prospect: Prospect }) {
         subject,
         body,
         channel: prospect.channel,
+        campaignId,
       });
       setMsg(
         r.ok
@@ -341,7 +350,13 @@ function EmailComposer({ prospect }: { prospect: Prospect }) {
   );
 }
 
-function CallPanel({ prospect }: { prospect: Prospect }) {
+function CallPanel({
+  prospect,
+  campaignId = null,
+}: {
+  prospect: Prospect;
+  campaignId?: string | null;
+}) {
   const script = callScripts[prospect.channel];
   const fullScript = script.sections
     .map((s) => `${s.label} :\n${personalize(s.text, prospect)}`)
@@ -372,6 +387,7 @@ function CallPanel({ prospect }: { prospect: Prospect }) {
         note: note || undefined,
         callbackAt: needsCallback ? callbackAt || tomorrow() : null,
         channel: prospect.channel,
+        campaignId,
       });
       setMsg(
         r.ok
