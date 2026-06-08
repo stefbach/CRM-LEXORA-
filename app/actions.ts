@@ -10,6 +10,7 @@ import {
   type CallOutcome,
   type CrmStatus,
 } from "@/lib/crm-meta";
+import type { GroupRules } from "@/lib/groups";
 
 export interface ActionResult {
   ok: boolean;
@@ -23,6 +24,8 @@ function revalidateCrm() {
   revalidatePath("/emails");
   revalidatePath("/opportunities");
   revalidatePath("/activities");
+  revalidatePath("/groupes");
+  revalidatePath("/campagnes");
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +39,7 @@ export async function recordCall(input: {
   note?: string;
   callbackAt?: string | null; // ISO date (yyyy-mm-dd) or null
   channel?: string;
+  campaignId?: string | null;
 }): Promise<ActionResult> {
   const supabase = getServerSupabase();
   if (!supabase) return { ok: false, error: "Supabase non configuré." };
@@ -50,6 +54,7 @@ export async function recordCall(input: {
     channel: input.channel ?? null,
   };
   if (input.callbackAt) metadata.callback_at = input.callbackAt;
+  if (input.campaignId) metadata.campaign_id = input.campaignId;
 
   const { error: actErr } = await supabase.from("crm_activities").insert({
     contact_id: input.contactId,
@@ -105,7 +110,13 @@ export interface EmailSendResult extends ActionResult {
 
 async function sendToContact(
   supabase: NonNullable<ReturnType<typeof getServerSupabase>>,
-  item: { contactId: string; subject: string; body: string; channel?: string }
+  item: {
+    contactId: string;
+    subject: string;
+    body: string;
+    channel?: string;
+    campaignId?: string | null;
+  }
 ): Promise<EmailSendResult> {
   const { data: contact, error } = await supabase
     .from("crm_contacts")
@@ -164,6 +175,7 @@ async function sendToContact(
       status: sent.ok ? "sent" : "error",
       error: sent.error ?? null,
       channel: item.channel ?? null,
+      campaign_id: item.campaignId ?? null,
     },
   });
 
@@ -191,6 +203,7 @@ export async function sendEmailToContact(item: {
   subject: string;
   body: string;
   channel?: string;
+  campaignId?: string | null;
 }): Promise<EmailSendResult> {
   const supabase = getServerSupabase();
   if (!supabase)
@@ -205,7 +218,13 @@ export async function sendEmailToContact(item: {
 // ---------------------------------------------------------------------------
 
 export async function sendBatchEmails(
-  items: { contactId: string; subject: string; body: string; channel?: string }[]
+  items: {
+    contactId: string;
+    subject: string;
+    body: string;
+    channel?: string;
+    campaignId?: string | null;
+  }[]
 ): Promise<{ ok: boolean; results: EmailSendResult[]; error?: string }> {
   const supabase = getServerSupabase();
   if (!supabase)
@@ -222,4 +241,156 @@ export async function sendBatchEmails(
   }
   revalidateCrm();
   return { ok: results.some((r) => r.ok), results };
+}
+
+// ---------------------------------------------------------------------------
+// Groups (dynamic segments)
+// ---------------------------------------------------------------------------
+
+export interface IdResult extends ActionResult {
+  id?: string;
+}
+
+export async function createGroup(input: {
+  name: string;
+  description?: string;
+  color?: string;
+  rules: GroupRules;
+}): Promise<IdResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  if (!input.name.trim()) return { ok: false, error: "Nom requis." };
+  const { data, error } = await supabase
+    .from("crm_groups")
+    .insert({
+      name: input.name.trim(),
+      description: input.description ?? null,
+      color: input.color ?? "#6366f1",
+      rules: input.rules ?? {},
+    })
+    .select("id")
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
+  return { ok: true, id: data?.id };
+}
+
+export async function updateGroup(
+  id: string,
+  patch: { name?: string; description?: string; color?: string; rules?: GroupRules }
+): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  const { error } = await supabase
+    .from("crm_groups")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
+  return { ok: true };
+}
+
+export async function deleteGroup(id: string): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  const { error } = await supabase.from("crm_groups").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns
+// ---------------------------------------------------------------------------
+
+export async function createCampaign(input: {
+  name: string;
+  kind: "email" | "call";
+  groupId: string;
+  template?: Record<string, unknown>;
+}): Promise<IdResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  if (!input.name.trim()) return { ok: false, error: "Nom requis." };
+  if (!input.groupId) return { ok: false, error: "Groupe cible requis." };
+  const { data, error } = await supabase
+    .from("crm_campaigns")
+    .insert({
+      name: input.name.trim(),
+      kind: input.kind,
+      group_id: input.groupId,
+      template: input.template ?? {},
+      status: "draft",
+    })
+    .select("id")
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
+  return { ok: true, id: data?.id };
+}
+
+export async function updateCampaign(
+  id: string,
+  patch: { name?: string; template?: Record<string, unknown> }
+): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  const { error } = await supabase
+    .from("crm_campaigns")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
+  return { ok: true };
+}
+
+export async function setCampaignStatus(
+  id: string,
+  status: "draft" | "active" | "paused" | "done"
+): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  const patch: Record<string, unknown> = {
+    status,
+    updated_at: new Date().toISOString(),
+  };
+  if (status === "active") patch.started_at = new Date().toISOString();
+  if (status === "done") patch.completed_at = new Date().toISOString();
+  const { error } = await supabase
+    .from("crm_campaigns")
+    .update(patch)
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
+  return { ok: true };
+}
+
+export async function deleteCampaign(id: string): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  const { error } = await supabase.from("crm_campaigns").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
+  return { ok: true };
+}
+
+/**
+ * Launch an email campaign: mark it active and send the (already personalized)
+ * batch, tagging every send with the campaign id for stats/tracking.
+ */
+export async function launchEmailCampaign(
+  campaignId: string,
+  items: { contactId: string; subject: string; body: string; channel?: string }[]
+): Promise<{ ok: boolean; results: EmailSendResult[]; error?: string }> {
+  const supabase = getServerSupabase();
+  if (!supabase)
+    return { ok: false, results: [], error: "Supabase non configuré." };
+
+  await supabase
+    .from("crm_campaigns")
+    .update({ status: "active", started_at: new Date().toISOString() })
+    .eq("id", campaignId);
+
+  const tagged = items.map((i) => ({ ...i, campaignId }));
+  return sendBatchEmails(tagged);
 }

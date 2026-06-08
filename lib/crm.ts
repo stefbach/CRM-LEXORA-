@@ -6,6 +6,7 @@ import {
   type Prospect,
 } from "./prospects";
 import { asStatus, statusMeta, type CrmStatus } from "./crm-meta";
+import { filterByRules, type GroupRules } from "./groups";
 
 const VALID_CHANNELS: Channel[] = ["pme", "cabinet", "daf", "finance"];
 
@@ -361,4 +362,285 @@ export async function loadDashboard(): Promise<DashboardData> {
     activity14,
     recent: activities.slice(0, 6),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Groups (dynamic segments)
+// ---------------------------------------------------------------------------
+
+export interface CrmGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string;
+  rules: GroupRules;
+  memberCount: number;
+  createdAt: string;
+}
+
+interface GroupRow {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string | null;
+  rules: GroupRules | null;
+  created_at: string;
+}
+
+function mapGroup(r: GroupRow, contacts: Prospect[]): CrmGroup {
+  const rules = r.rules ?? {};
+  return {
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    color: r.color ?? "#6366f1",
+    rules,
+    memberCount: filterByRules(contacts, rules).length,
+    createdAt: r.created_at,
+  };
+}
+
+export async function loadGroups(): Promise<{
+  groups: CrmGroup[];
+  contacts: Prospect[];
+  live: boolean;
+}> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { groups: [], contacts: [], live: false };
+
+  const [{ prospects, live }, { data, error }] = await Promise.all([
+    loadContacts(),
+    supabase
+      .from("crm_groups")
+      .select("id,name,description,color,rules,created_at")
+      .order("created_at", { ascending: false })
+      .limit(500),
+  ]);
+
+  if (error || !data) return { groups: [], contacts: prospects, live };
+  const groups = (data as unknown as GroupRow[]).map((r) =>
+    mapGroup(r, prospects)
+  );
+  return { groups, contacts: prospects, live };
+}
+
+export async function loadGroup(
+  id: string
+): Promise<{ group: CrmGroup; members: Prospect[] } | null> {
+  const supabase = getServerSupabase();
+  if (!supabase) return null;
+  const [{ prospects }, { data, error }] = await Promise.all([
+    loadContacts(),
+    supabase
+      .from("crm_groups")
+      .select("id,name,description,color,rules,created_at")
+      .eq("id", id)
+      .maybeSingle(),
+  ]);
+  if (error || !data) return null;
+  const group = mapGroup(data as unknown as GroupRow, prospects);
+  return { group, members: filterByRules(prospects, group.rules) };
+}
+
+// ---------------------------------------------------------------------------
+// Campaigns (email on one side, call on the other)
+// ---------------------------------------------------------------------------
+
+export type CampaignKind = "email" | "call";
+export type CampaignStatus = "draft" | "active" | "paused" | "done";
+
+export interface CampaignStats {
+  target: number;
+  processed: number; // distinct contacts touched
+  sent: number; // email: successful sends
+  errors: number; // email: failures
+  reached: number; // call: reached outcomes
+  byOutcome: Record<string, number>;
+}
+
+export interface CrmCampaign {
+  id: string;
+  name: string;
+  kind: CampaignKind;
+  status: CampaignStatus;
+  groupId: string | null;
+  groupName: string | null;
+  groupColor: string | null;
+  template: Record<string, unknown>;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  stats: CampaignStats;
+}
+
+interface CampaignRow {
+  id: string;
+  name: string;
+  kind: CampaignKind;
+  status: CampaignStatus;
+  group_id: string | null;
+  template: Record<string, unknown> | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  group: { name: string | null; color: string | null; rules: GroupRules | null } | null;
+}
+
+interface CampaignActivityRow {
+  type: string;
+  contact_id: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+// Aggregate per-campaign activity into a stats map.
+function aggregate(rows: CampaignActivityRow[]) {
+  const map = new Map<
+    string,
+    {
+      contacts: Set<string>;
+      sent: number;
+      errors: number;
+      reached: number;
+      byOutcome: Record<string, number>;
+    }
+  >();
+  for (const r of rows) {
+    const meta = r.metadata ?? {};
+    const cid = meta["campaign_id"];
+    if (typeof cid !== "string") continue;
+    let acc = map.get(cid);
+    if (!acc) {
+      acc = { contacts: new Set(), sent: 0, errors: 0, reached: 0, byOutcome: {} };
+      map.set(cid, acc);
+    }
+    if (r.contact_id) acc.contacts.add(r.contact_id);
+    if (r.type === "email") {
+      if (meta["status"] === "sent") acc.sent++;
+      else if (meta["status"] === "error") acc.errors++;
+    } else if (r.type === "call") {
+      if (meta["reached"] === true) acc.reached++;
+      const o = meta["outcome"];
+      if (typeof o === "string") acc.byOutcome[o] = (acc.byOutcome[o] ?? 0) + 1;
+    }
+  }
+  return map;
+}
+
+export async function loadCampaigns(): Promise<{
+  campaigns: CrmCampaign[];
+  live: boolean;
+}> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { campaigns: [], live: false };
+
+  const [{ prospects, live }, { data, error }, { data: acts }] =
+    await Promise.all([
+      loadContacts(),
+      supabase
+        .from("crm_campaigns")
+        .select(
+          "id,name,kind,status,group_id,template,created_at,started_at,completed_at,group:group_id(name,color,rules)"
+        )
+        .order("created_at", { ascending: false })
+        .limit(500),
+      supabase
+        .from("crm_activities")
+        .select("type,contact_id,metadata")
+        .not("metadata->>campaign_id", "is", null)
+        .limit(20000),
+    ]);
+
+  if (error || !data) return { campaigns: [], live };
+
+  const agg = aggregate((acts ?? []) as CampaignActivityRow[]);
+
+  const campaigns = (data as unknown as CampaignRow[]).map((r) => {
+    const rules = r.group?.rules ?? {};
+    const target = r.group ? filterByRules(prospects, rules).length : 0;
+    const a = agg.get(r.id);
+    const stats: CampaignStats = {
+      target,
+      processed: a ? a.contacts.size : 0,
+      sent: a?.sent ?? 0,
+      errors: a?.errors ?? 0,
+      reached: a?.reached ?? 0,
+      byOutcome: a?.byOutcome ?? {},
+    };
+    return {
+      id: r.id,
+      name: r.name,
+      kind: r.kind,
+      status: r.status,
+      groupId: r.group_id,
+      groupName: r.group?.name ?? null,
+      groupColor: r.group?.color ?? null,
+      template: r.template ?? {},
+      createdAt: r.created_at,
+      startedAt: r.started_at,
+      completedAt: r.completed_at,
+      stats,
+    } satisfies CrmCampaign;
+  });
+
+  return { campaigns, live };
+}
+
+export async function loadCampaign(id: string): Promise<{
+  campaign: CrmCampaign;
+  members: Prospect[];
+  doneContactIds: string[];
+} | null> {
+  const supabase = getServerSupabase();
+  if (!supabase) return null;
+
+  const [{ prospects }, { data, error }, { data: acts }] = await Promise.all([
+    loadContacts(),
+    supabase
+      .from("crm_campaigns")
+      .select(
+        "id,name,kind,status,group_id,template,created_at,started_at,completed_at,group:group_id(name,color,rules)"
+      )
+      .eq("id", id)
+      .maybeSingle(),
+    supabase
+      .from("crm_activities")
+      .select("type,contact_id,metadata")
+      .eq("metadata->>campaign_id", id)
+      .limit(20000),
+  ]);
+
+  if (error || !data) return null;
+  const r = data as unknown as CampaignRow;
+  const rules = r.group?.rules ?? {};
+  const members = r.group ? filterByRules(prospects, rules) : [];
+  const rows = (acts ?? []) as CampaignActivityRow[];
+  const agg = aggregate(rows).get(r.id);
+
+  const campaign: CrmCampaign = {
+    id: r.id,
+    name: r.name,
+    kind: r.kind,
+    status: r.status,
+    groupId: r.group_id,
+    groupName: r.group?.name ?? null,
+    groupColor: r.group?.color ?? null,
+    template: r.template ?? {},
+    createdAt: r.created_at,
+    startedAt: r.started_at,
+    completedAt: r.completed_at,
+    stats: {
+      target: members.length,
+      processed: agg ? agg.contacts.size : 0,
+      sent: agg?.sent ?? 0,
+      errors: agg?.errors ?? 0,
+      reached: agg?.reached ?? 0,
+      byOutcome: agg?.byOutcome ?? {},
+    },
+  };
+
+  const doneContactIds = Array.from(
+    new Set(rows.map((x) => x.contact_id).filter(Boolean) as string[])
+  );
+
+  return { campaign, members, doneContactIds };
 }
