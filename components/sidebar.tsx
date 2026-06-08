@@ -10,11 +10,13 @@ import {
   CalendarCheck,
   Settings,
   Sparkles,
+  Crosshair,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/prospects", label: "Prospects", icon: Crosshair },
   { href: "/opportunities", label: "Opportunities", icon: Target },
   { href: "/people", label: "People", icon: Users },
   { href: "/companies", label: "Companies", icon: Building2 },
