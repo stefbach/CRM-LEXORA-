@@ -1,62 +1,68 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { GripVertical } from "lucide-react";
-import {
-  opportunities as seed,
-  pipelineStages,
-  stageMeta,
-  companyById,
-  personById,
-} from "@/lib/data";
-import type { Opportunity, Stage } from "@/lib/types";
-import { Avatar, CompanyLogo } from "@/components/ui";
-import { formatCurrency } from "@/lib/utils";
+import { GripVertical, Phone, Mail } from "lucide-react";
+import { channelMeta, fullName, type Prospect } from "@/lib/prospects";
+import { statusMeta, type CrmStatus } from "@/lib/crm-meta";
+import { Avatar } from "@/components/ui";
+import { updateContactStatus } from "@/app/actions";
 
-export function KanbanBoard() {
-  const [deals, setDeals] = useState<Opportunity[]>(seed);
+// Working pipeline — "nouveau" stays in Prospects/Appels, not the board.
+const BOARD_COLUMNS: CrmStatus[] = [
+  "a_qualifier",
+  "contacte",
+  "en_discussion",
+  "gagne",
+  "perdu",
+];
+
+export function PipelineBoard({ prospects }: { prospects: Prospect[] }) {
+  const [cards, setCards] = useState<Prospect[]>(prospects);
   const [dragId, setDragId] = useState<string | null>(null);
-  const [overStage, setOverStage] = useState<Stage | null>(null);
+  const [overCol, setOverCol] = useState<CrmStatus | null>(null);
+  const [, start] = useTransition();
 
-  function drop(stage: Stage) {
-    if (!dragId) return;
-    setDeals((prev) =>
-      prev.map((d) =>
-        d.id === dragId
-          ? {
-              ...d,
-              stage,
-              probability:
-                stage === "won" ? 100 : stage === "lost" ? 0 : d.probability,
-            }
-          : d
-      )
-    );
+  function drop(status: CrmStatus) {
+    const id = dragId;
     setDragId(null);
-    setOverStage(null);
+    setOverCol(null);
+    if (!id) return;
+    const current = cards.find((c) => c.id === id);
+    if (!current || current.status === status) return;
+
+    setCards((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, status } : c))
+    );
+    start(async () => {
+      const r = await updateContactStatus(id, status);
+      if (!r.ok) {
+        // revert on failure
+        setCards((prev) =>
+          prev.map((c) =>
+            c.id === id ? { ...c, status: current.status } : c
+          )
+        );
+      }
+    });
   }
 
   return (
     <div className="flex gap-4 overflow-x-auto pb-4">
-      {pipelineStages.map((stage) => {
-        const items = deals.filter((d) => d.stage === stage);
-        const total = items.reduce((a, d) => a + d.amount, 0);
-        const meta = stageMeta[stage];
-        const isOver = overStage === stage;
-
+      {BOARD_COLUMNS.map((status) => {
+        const items = cards.filter((c) => c.status === status);
+        const meta = statusMeta[status];
+        const isOver = overCol === status;
         return (
           <div
-            key={stage}
+            key={status}
             onDragOver={(e) => {
               e.preventDefault();
-              setOverStage(stage);
+              setOverCol(status);
             }}
-            onDrop={() => drop(stage)}
+            onDrop={() => drop(status)}
             className={`flex w-72 shrink-0 flex-col rounded-2xl border bg-ink-900/40 transition-colors ${
-              isOver
-                ? "border-brand-500/40 bg-brand-500/[0.04]"
-                : "border-white/5"
+              isOver ? "border-brand-500/40 bg-brand-500/[0.04]" : "border-white/5"
             }`}
           >
             <div className="flex items-center justify-between gap-2 px-4 py-3">
@@ -66,72 +72,63 @@ export function KanbanBoard() {
                   style={{ background: meta.color }}
                 />
                 <span className="text-sm font-semibold text-white">
-                  {meta.label}
+                  {meta.short}
                 </span>
                 <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-slate-400">
                   {items.length}
                 </span>
               </div>
-              <span className="text-xs font-medium text-slate-500">
-                {formatCurrency(total)}
-              </span>
             </div>
 
             <div className="flex flex-1 flex-col gap-2 px-2 pb-3">
               <AnimatePresence>
-                {items.map((deal) => {
-                  const company = companyById(deal.companyId);
-                  const owner = personById(deal.ownerId);
+                {items.slice(0, 80).map((p) => {
+                  const ch = channelMeta[p.channel];
                   return (
                     <motion.div
-                      key={deal.id}
+                      key={p.id}
                       layout
                       initial={{ opacity: 0, scale: 0.96 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.96 }}
                       draggable
-                      onDragStart={() => setDragId(deal.id)}
+                      onDragStart={() => setDragId(p.id)}
                       onDragEnd={() => setDragId(null)}
                       className={`group cursor-grab rounded-xl border border-white/5 bg-ink-800/80 p-3 shadow-card transition active:cursor-grabbing ${
-                        dragId === deal.id ? "opacity-40" : "hover:border-white/15"
+                        dragId === p.id ? "opacity-40" : "hover:border-white/15"
                       }`}
                     >
                       <div className="flex items-start gap-2">
-                        {company && (
-                          <CompanyLogo
-                            name={company.name}
-                            color={company.logoColor}
-                            size={28}
-                          />
-                        )}
-                        <p className="min-w-0 flex-1 text-sm font-medium leading-snug text-white">
-                          {deal.name}
-                        </p>
+                        <Avatar
+                          first={p.firstName}
+                          last={p.lastName}
+                          color={ch.color}
+                          size={28}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium leading-snug text-white">
+                            {fullName(p)}
+                          </p>
+                          <p className="truncate text-xs text-slate-500">
+                            {p.company || "—"}
+                          </p>
+                        </div>
                         <GripVertical className="h-4 w-4 shrink-0 text-slate-600 opacity-0 transition group-hover:opacity-100" />
                       </div>
 
-                      <div className="mt-3 flex items-center justify-between">
-                        <span className="text-sm font-semibold text-white">
-                          {formatCurrency(deal.amount)}
+                      <div className="mt-2.5 flex items-center gap-2">
+                        <span
+                          className="chip"
+                          style={{ color: ch.color, background: `${ch.color}1a` }}
+                        >
+                          {ch.short}
                         </span>
-                        {owner && (
-                          <Avatar
-                            first={owner.firstName}
-                            last={owner.lastName}
-                            color={owner.avatarColor}
-                            size={24}
-                          />
+                        {p.phone && (
+                          <Phone className="h-3.5 w-3.5 text-emerald-300/70" />
                         )}
-                      </div>
-
-                      <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-white/5">
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${deal.probability}%`,
-                            background: meta.color,
-                          }}
-                        />
+                        {p.email && (
+                          <Mail className="h-3.5 w-3.5 text-brand-300/70" />
+                        )}
                       </div>
                     </motion.div>
                   );
@@ -140,7 +137,7 @@ export function KanbanBoard() {
 
               {items.length === 0 && (
                 <div className="grid h-20 place-items-center rounded-xl border border-dashed border-white/10 text-xs text-slate-600">
-                  Drop deals here
+                  Glissez des contacts ici
                 </div>
               )}
             </div>

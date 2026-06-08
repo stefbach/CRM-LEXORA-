@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   X,
   Mail,
@@ -12,6 +12,8 @@ import {
   Sparkles,
   MapPin,
   Building2,
+  Loader2,
+  CalendarClock,
 } from "lucide-react";
 import {
   type Prospect,
@@ -20,12 +22,19 @@ import {
   fullName,
 } from "@/lib/prospects";
 import {
+  callOutcomes,
+  CALL_OUTCOME_KEYS,
+  statusMeta,
+  type CallOutcome,
+} from "@/lib/crm-meta";
+import {
   emailTemplates,
   callScripts,
   personalize,
   buildMailto,
 } from "@/lib/templates";
 import { Avatar } from "@/components/ui";
+import { recordCall, sendEmailToContact } from "@/app/actions";
 
 function CopyButton({ text, label = "Copier" }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
@@ -55,11 +64,17 @@ function CopyButton({ text, label = "Copier" }: { text: string; label?: string }
 export function ProspectDrawer({
   prospect,
   onClose,
+  initialTab = "email",
 }: {
   prospect: Prospect | null;
   onClose: () => void;
+  initialTab?: "email" | "call";
 }) {
-  const [tab, setTab] = useState<"email" | "call">("email");
+  const [tab, setTab] = useState<"email" | "call">(initialTab);
+
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab, prospect]);
 
   if (!prospect) return null;
 
@@ -81,7 +96,7 @@ export function ProspectDrawer({
                 tab === t ? "text-white" : "text-slate-500 hover:text-slate-300"
               }`}
             >
-              {t === "email" ? "Email personnalisé" : "Script d'appel"}
+              {t === "email" ? "Email personnalisé" : "Appel & issue"}
               {tab === t && (
                 <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-brand-400" />
               )}
@@ -109,6 +124,7 @@ function DrawerHeader({
   onClose: () => void;
 }) {
   const ch = channelMeta[prospect.channel];
+  const st = statusMeta[prospect.status];
   return (
     <div className="border-b border-white/5 p-5">
       <div className="flex items-start gap-3">
@@ -135,6 +151,12 @@ function DrawerHeader({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+        <span
+          className="chip"
+          style={{ color: st.color, background: `${st.color}1a` }}
+        >
+          {st.label}
+        </span>
         <span
           className="chip"
           style={{ color: ch.color, background: `${ch.color}1a` }}
@@ -211,35 +233,39 @@ function EmailComposer({ prospect }: { prospect: Prospect }) {
 
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     setSubject(personalize(template.subject, prospect));
     setBody(personalize(template.body, prospect));
+    setMsg(null);
   }, [template, prospect]);
 
-  const mailto = buildMailto(prospect, {
-    ...template,
-    subject,
-    body,
-  });
+  const mailto = buildMailto(prospect, { ...template, subject, body });
+
+  function handleSend() {
+    setMsg(null);
+    start(async () => {
+      const r = await sendEmailToContact({
+        contactId: prospect.id,
+        subject,
+        body,
+        channel: prospect.channel,
+      });
+      setMsg(
+        r.ok
+          ? { ok: true, text: "Email envoyé via Resend ✅" }
+          : { ok: false, text: r.error ?? "Échec de l'envoi." }
+      );
+    });
+  }
 
   return (
     <div className="space-y-4">
-      {templates.length > 1 && (
-        <div className="flex flex-wrap gap-2">
-          {templates.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTemplateId(t.id)}
-              className={`chip ${
-                t.id === templateId
-                  ? "bg-brand-500/20 text-brand-200"
-                  : "bg-white/5 text-slate-400"
-              }`}
-            >
-              {t.name}
-            </button>
-          ))}
+      {prospect.optOut && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3 text-xs text-red-300">
+          Ce contact est désinscrit (opt-out) — l'envoi sera bloqué.
         </div>
       )}
 
@@ -261,34 +287,54 @@ function EmailComposer({ prospect }: { prospect: Prospect }) {
         <textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          rows={14}
+          rows={13}
           className="w-full resize-none rounded-lg border border-white/5 bg-ink-800/60 px-3 py-2 text-sm leading-relaxed text-slate-100 outline-none focus:border-brand-500/40"
         />
       </label>
 
       <div className="flex flex-wrap items-center gap-2">
-        <a
-          href={prospect.email ? mailto : undefined}
-          aria-disabled={!prospect.email}
+        <button
+          onClick={handleSend}
+          disabled={pending || !prospect.email || prospect.optOut}
           className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition ${
-            prospect.email
+            prospect.email && !prospect.optOut
               ? "bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-glow hover:brightness-110"
               : "cursor-not-allowed bg-white/5 text-slate-500"
           }`}
         >
-          <Send className="h-4 w-4" />
-          {prospect.email ? "Ouvrir dans la messagerie" : "Email indisponible"}
+          {pending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Send className="h-4 w-4" />
+          )}
+          {prospect.email ? "Envoyer via Lexora" : "Email indisponible"}
+        </button>
+        <a
+          href={prospect.email ? mailto : undefined}
+          className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-ink-800/60 px-3 py-2 text-sm text-slate-300 transition hover:text-white"
+        >
+          Ouvrir la messagerie
         </a>
-        <CopyButton text={body} label="Copier le message" />
-        <CopyButton text={subject} label="Copier l'objet" />
+        <CopyButton text={body} label="Copier" />
       </div>
+
+      {msg && (
+        <p
+          className={`text-xs ${
+            msg.ok ? "text-emerald-400" : "text-red-400"
+          }`}
+        >
+          {msg.text}
+        </p>
+      )}
 
       <div className="flex items-start gap-2 rounded-xl border border-brand-500/20 bg-brand-500/[0.06] p-3">
         <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-brand-300" />
         <p className="text-xs leading-relaxed text-slate-400">
-          <span className="font-medium text-slate-200">Lexora AI</span> —
-          bientôt : génération d'un email sur-mesure à partir du profil
-          LinkedIn et de l'historique, puis envoi via un agent.
+          <span className="font-medium text-slate-200">Envoi réel</span> via
+          Resend : l'email part depuis votre domaine, l'historique est
+          enregistré et le statut passe à « Contacté ». Pour l'envoi en lot,
+          utilisez la page <span className="text-slate-200">Emails</span>.
         </p>
       </div>
     </div>
@@ -301,8 +347,47 @@ function CallPanel({ prospect }: { prospect: Prospect }) {
     .map((s) => `${s.label} :\n${personalize(s.text, prospect)}`)
     .join("\n\n");
 
+  const [outcome, setOutcome] = useState<CallOutcome | null>(null);
+  const [note, setNote] = useState("");
+  const [callbackAt, setCallbackAt] = useState("");
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const needsCallback = outcome ? callOutcomes[outcome].callback : false;
+
+  function tomorrow() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function handleSave() {
+    if (!outcome) return;
+    setMsg(null);
+    start(async () => {
+      const r = await recordCall({
+        contactId: prospect.id,
+        companyId: prospect.companyId,
+        outcome,
+        note: note || undefined,
+        callbackAt: needsCallback ? callbackAt || tomorrow() : null,
+        channel: prospect.channel,
+      });
+      setMsg(
+        r.ok
+          ? { ok: true, text: "Appel enregistré ✅" }
+          : { ok: false, text: r.error ?? "Échec." }
+      );
+      if (r.ok) {
+        setNote("");
+        setOutcome(null);
+        setCallbackAt("");
+      }
+    });
+  }
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
         <a
           href={
@@ -323,6 +408,82 @@ function CallPanel({ prospect }: { prospect: Prospect }) {
         <CopyButton text={fullScript} label="Copier le script" />
       </div>
 
+      {/* Outcome capture */}
+      <div className="rounded-2xl border border-white/10 bg-ink-800/40 p-4">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Issue de l'appel
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {CALL_OUTCOME_KEYS.map((key) => {
+            const o = callOutcomes[key];
+            const active = outcome === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setOutcome(active ? null : key)}
+                className="chip transition"
+                style={{
+                  color: active ? "#fff" : o.color,
+                  background: active ? o.color : `${o.color}1a`,
+                  boxShadow: active ? `inset 0 0 0 1px ${o.color}` : "none",
+                }}
+              >
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {needsCallback && (
+          <label className="mt-3 block">
+            <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-400">
+              <CalendarClock className="h-3.5 w-3.5" /> Rappeler le
+            </span>
+            <input
+              type="date"
+              value={callbackAt || tomorrow()}
+              onChange={(e) => setCallbackAt(e.target.value)}
+              className="rounded-lg border border-white/5 bg-ink-800/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500/40"
+            />
+          </label>
+        )}
+
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={3}
+          placeholder="Note d'appel (optionnel)…"
+          className="mt-3 w-full resize-none rounded-lg border border-white/5 bg-ink-800/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500/40"
+        />
+
+        <div className="mt-3 flex items-center gap-2">
+          <button
+            onClick={handleSave}
+            disabled={!outcome || pending}
+            className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition ${
+              outcome
+                ? "bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-glow hover:brightness-110"
+                : "cursor-not-allowed bg-white/5 text-slate-500"
+            }`}
+          >
+            {pending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            Enregistrer l'appel
+          </button>
+          {msg && (
+            <span
+              className={`text-xs ${msg.ok ? "text-emerald-400" : "text-red-400"}`}
+            >
+              {msg.text}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Script */}
       <div className="space-y-2.5">
         {script.sections.map((s, i) => (
           <div

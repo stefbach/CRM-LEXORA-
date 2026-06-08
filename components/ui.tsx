@@ -1,6 +1,5 @@
 import { cn, initials } from "@/lib/utils";
-import { stageMeta } from "@/lib/data";
-import type { Stage } from "@/lib/types";
+import { statusMeta, type CrmStatus } from "@/lib/crm-meta";
 
 export function Avatar({
   first,
@@ -52,8 +51,8 @@ export function CompanyLogo({
   );
 }
 
-export function StageBadge({ stage }: { stage: Stage }) {
-  const meta = stageMeta[stage];
+export function StatusBadge({ status }: { status: CrmStatus }) {
+  const meta = statusMeta[status];
   return (
     <span
       className="chip"

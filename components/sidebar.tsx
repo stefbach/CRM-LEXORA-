@@ -11,16 +11,20 @@ import {
   Settings,
   Sparkles,
   Crosshair,
+  PhoneCall,
+  Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/", label: "Tableau de bord", icon: LayoutDashboard },
   { href: "/prospects", label: "Prospects", icon: Crosshair },
-  { href: "/opportunities", label: "Opportunities", icon: Target },
-  { href: "/people", label: "People", icon: Users },
-  { href: "/companies", label: "Companies", icon: Building2 },
-  { href: "/activities", label: "Activities", icon: CalendarCheck },
+  { href: "/appels", label: "Appels", icon: PhoneCall },
+  { href: "/emails", label: "Emails", icon: Send },
+  { href: "/opportunities", label: "Pipeline", icon: Target },
+  { href: "/people", label: "Contacts", icon: Users },
+  { href: "/companies", label: "Sociétés", icon: Building2 },
+  { href: "/activities", label: "Activités", icon: CalendarCheck },
 ];
 
 export function Sidebar() {

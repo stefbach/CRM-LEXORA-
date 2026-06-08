@@ -4,13 +4,38 @@ A modern, fast, ultra-clean CRM — inspired by [Twenty](https://github.com/twen
 
 ![Stack](https://img.shields.io/badge/Next.js-14-black) ![Stack](https://img.shields.io/badge/TypeScript-5-blue) ![Stack](https://img.shields.io/badge/TailwindCSS-3-38bdf8)
 
-## ✨ Features
+## ✨ Fonctionnalités
 
-- **Dashboard** — KPIs (open pipeline, weighted forecast, won, win rate), revenue trend & pipeline charts, top deals and an "up next" feed.
-- **Opportunities** — a drag-and-drop Kanban board; move deals across stages and watch probabilities update live.
-- **People** — searchable contacts table with company, role and quick email/call actions.
-- **Companies** — account cards with ARR, headcount, contacts and open-deal counts.
-- **Activities** — a single timeline of calls, emails, meetings, notes and tasks.
+100 % branché sur la base **Supabase** Lexora (`crm_contacts`, `crm_companies`,
+`crm_activities`) — aucune donnée de démo embarquée.
+
+- **Tableau de bord** — base en direct : prospects, contactés, rappels dus,
+  activité (appels/emails) sur 14 jours, pipeline par statut et répartition par flux.
+- **Prospects** — base consolidée Maurice, recherche + filtres, emails et scripts
+  d'appel personnalisés en un clic.
+- **Appels** — planification **par flux** (PME / Cabinet / DAF / Finance), capture
+  de l'issue (Joint · intéressé / à rappeler / pas intéressé · Pas joint…),
+  écriture dans `crm_activities`, mise à jour du statut et **rappels planifiés**.
+- **Emails** — envoi **en lot semi-automatique** via **Resend**, personnalisé par
+  contact, journalisé, et respectant les opt-out.
+- **Pipeline** — board glisser-déposer par statut ; déplacer un contact met à jour
+  Supabase en direct.
+- **Contacts / Sociétés / Activités** — vues live de la base.
+
+## ⚙️ Configuration
+
+Copiez [`.env.example`](./.env.example) et renseignez :
+
+| Variable | Rôle |
+| --- | --- |
+| `SUPABASE_URL` | URL du projet Lexora |
+| `SUPABASE_SERVICE_ROLE_KEY` | Clé service-role (serveur uniquement, hors navigateur) |
+| `RESEND_API_KEY` | Clé Resend pour l'envoi d'emails |
+| `RESEND_FROM` | Expéditeur (domaine vérifié dans Resend) |
+
+Sans `SUPABASE_SERVICE_ROLE_KEY`, l'app démarre mais affiche des listes vides
+(badge « Supabase non connecté »). Sans clés Resend, la composition des emails
+fonctionne mais l'envoi est désactivé (badge « Resend à configurer »).
 
 ## 🧱 Tech stack
 
@@ -23,10 +48,9 @@ A modern, fast, ultra-clean CRM — inspired by [Twenty](https://github.com/twen
 | Motion   | Framer Motion                   |
 | Icons    | Lucide                          |
 
-The data layer lives in [`lib/data.ts`](./lib/data.ts) as typed mock data, so the
-app runs with zero configuration. Swapping it for a real backend (Supabase,
-Postgres, the Twenty API…) means replacing those exported functions — the UI
-stays untouched.
+La couche données vit dans [`lib/crm.ts`](./lib/crm.ts) (lecture Supabase,
+server-only) et [`app/actions.ts`](./app/actions.ts) (écriture : issues d'appel,
+changement de statut, envoi d'emails). Toute l'UI est écrite contre ces fonctions.
 
 ## 🚀 Getting started
 
@@ -45,11 +69,13 @@ auto-detected.
 
 ## 🗺️ Roadmap
 
-- [ ] Wire a real backend (Supabase) behind `lib/data.ts`
+- [x] Brancher Supabase (lecture + écriture)
+- [x] Planification d'appels par flux + rappels
+- [x] Envoi d'emails en lot (Resend) avec opt-out
+- [ ] Séquences d'emails multi-étapes automatiques (relances programmées)
 - [ ] Auth + multi-workspace
-- [ ] Record detail pages & inline editing
-- [ ] Command palette (⌘K) search
-- [ ] AI summaries & follow-up drafting
+- [ ] Tracking d'ouverture/clic (webhooks Resend)
+- [ ] Synthèses & rédaction assistées par IA
 
 ---
 

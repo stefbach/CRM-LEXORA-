@@ -1,47 +1,52 @@
-import { Mail, Phone, Plus, Search } from "lucide-react";
-import { people, companyById } from "@/lib/data";
-import { Avatar, CompanyLogo, PageHeader } from "@/components/ui";
+import { Mail, Phone, Linkedin } from "lucide-react";
+import { loadContacts } from "@/lib/crm";
+import { fullName } from "@/lib/prospects";
+import { channelMeta } from "@/lib/prospects";
+import { statusMeta } from "@/lib/crm-meta";
+import { Avatar, PageHeader } from "@/components/ui";
 import { relativeDate } from "@/lib/utils";
 
-export default function PeoplePage() {
+export const dynamic = "force-dynamic";
+
+export default async function PeoplePage() {
+  const { prospects, live } = await loadContacts();
+  const shown = prospects.slice(0, 400);
+
   return (
     <div>
       <PageHeader
-        title="People"
-        subtitle={`${people.length} contacts across your accounts.`}
+        title="Contacts"
+        subtitle={`${prospects.length} contacts dans votre base Lexora.`}
         action={
-          <button className="inline-flex h-9 items-center gap-2 rounded-lg bg-gradient-to-br from-brand-500 to-brand-600 px-3 text-sm font-medium text-white shadow-glow transition hover:brightness-110">
-            <Plus className="h-4 w-4" />
-            Add person
-          </button>
+          <span
+            className="chip"
+            style={{
+              color: live ? "#10b981" : "#f59e0b",
+              background: live ? "#10b9811a" : "#f59e0b1a",
+            }}
+          >
+            {live ? "Live · Supabase" : "Supabase non connecté"}
+          </span>
         }
       />
 
       <div className="card overflow-hidden p-0">
-        <div className="flex items-center gap-3 border-b border-white/5 px-4 py-3">
-          <div className="relative flex-1 max-w-xs">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-            <input
-              placeholder="Filter contacts…"
-              className="h-9 w-full rounded-lg border border-white/5 bg-ink-800/60 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-500 outline-none focus:border-brand-500/40"
-            />
-          </div>
-        </div>
-
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-white/5 text-left text-xs uppercase tracking-wide text-slate-500">
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Company</th>
-                <th className="px-4 py-3 font-medium">Title</th>
+                <th className="px-4 py-3 font-medium">Nom</th>
+                <th className="px-4 py-3 font-medium">Société</th>
+                <th className="px-4 py-3 font-medium">Fonction</th>
+                <th className="px-4 py-3 font-medium">Statut</th>
                 <th className="px-4 py-3 font-medium">Contact</th>
-                <th className="px-4 py-3 font-medium">Added</th>
+                <th className="px-4 py-3 font-medium">Dernier contact</th>
               </tr>
             </thead>
             <tbody>
-              {people.map((p) => {
-                const company = companyById(p.companyId);
+              {shown.map((p) => {
+                const ch = channelMeta[p.channel];
+                const st = statusMeta[p.status];
                 return (
                   <tr
                     key={p.id}
@@ -52,50 +57,52 @@ export default function PeoplePage() {
                         <Avatar
                           first={p.firstName}
                           last={p.lastName}
-                          color={p.avatarColor}
+                          color={ch.color}
                           size={34}
                         />
                         <div>
-                          <p className="font-medium text-white">
-                            {p.firstName} {p.lastName}
-                          </p>
-                          <p className="text-xs text-slate-500">{p.city}</p>
+                          <p className="font-medium text-white">{fullName(p)}</p>
+                          <p className="text-xs text-slate-500">{p.city || ""}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3">
-                      {company && (
-                        <div className="flex items-center gap-2">
-                          <CompanyLogo
-                            name={company.name}
-                            color={company.logoColor}
-                            size={24}
-                          />
-                          <span className="text-slate-300">{company.name}</span>
-                        </div>
-                      )}
+                    <td className="px-4 py-3 text-slate-300">{p.company || "—"}</td>
+                    <td className="px-4 py-3 text-slate-400">
+                      {p.jobTitle || "—"}
                     </td>
-                    <td className="px-4 py-3 text-slate-400">{p.jobTitle}</td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-3 text-slate-400">
-                        <a
-                          href={`mailto:${p.email}`}
-                          className="grid h-7 w-7 place-items-center rounded-lg bg-white/5 transition hover:text-white"
-                          title={p.email}
+                      <span
+                        className="chip"
+                        style={{ color: st.color, background: `${st.color}1a` }}
+                      >
+                        {st.short}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 text-slate-500">
+                        <span
+                          className={p.email ? "text-brand-300" : "text-slate-700"}
+                          title={p.email ?? "Email inconnu"}
                         >
-                          <Mail className="h-3.5 w-3.5" />
-                        </a>
-                        <a
-                          href={`tel:${p.phone}`}
-                          className="grid h-7 w-7 place-items-center rounded-lg bg-white/5 transition hover:text-white"
-                          title={p.phone}
+                          <Mail className="h-4 w-4" />
+                        </span>
+                        <span
+                          className={p.phone ? "text-emerald-300" : "text-slate-700"}
+                          title={p.phone ?? "Téléphone inconnu"}
                         >
-                          <Phone className="h-3.5 w-3.5" />
-                        </a>
+                          <Phone className="h-4 w-4" />
+                        </span>
+                        <span
+                          className={p.linkedin ? "text-sky-300" : "text-slate-700"}
+                        >
+                          <Linkedin className="h-4 w-4" />
+                        </span>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-500">
-                      {relativeDate(p.createdAt)}
+                      {p.lastContactedAt
+                        ? relativeDate(p.lastContactedAt)
+                        : "—"}
                     </td>
                   </tr>
                 );

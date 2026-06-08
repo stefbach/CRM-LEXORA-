@@ -1,9 +1,10 @@
-import raw from "./prospects.json";
+import type { CrmStatus } from "./crm-meta";
 
 export type Channel = "pme" | "cabinet" | "daf" | "finance";
 
 export interface Prospect {
   id: string;
+  companyId: string | null;
   firstName: string;
   lastName: string;
   jobTitle: string | null;
@@ -20,7 +21,10 @@ export interface Prospect {
   score: number | null;
   priority: string | null;
   note: string | null;
-  status: string;
+  /** raw pipeline status (Postgres enum crm_prospect_status) */
+  status: CrmStatus;
+  optOut: boolean;
+  lastContactedAt: string | null;
   source: string | null;
 }
 
@@ -41,25 +45,11 @@ export const priorityMeta: Record<string, string> = {
   Direct: "#8b5cf6",
 };
 
-const prospects = raw as Prospect[];
-
-// ---- Data access layer ----
-// Swap the body of these functions for Supabase queries later; the UI is
-// written against this interface, so nothing else needs to change.
-
-export function getAllProspects(): Prospect[] {
-  return prospects;
-}
-
-export function getProspect(id: string): Prospect | undefined {
-  return prospects.find((p) => p.id === id);
-}
-
 export function fullName(p: Prospect) {
-  return `${p.firstName} ${p.lastName}`.trim();
+  return `${p.firstName} ${p.lastName}`.trim() || "Sans nom";
 }
 
-export function prospectStats(list: Prospect[] = prospects) {
+export function prospectStats(list: Prospect[]) {
   const total = list.length;
   const withEmail = list.filter((p) => p.email).length;
   const withPhone = list.filter((p) => p.phone).length;
@@ -78,7 +68,3 @@ export function prospectStats(list: Prospect[] = prospects) {
 
   return { total, withEmail, withPhone, verified, byChannel, hot };
 }
-
-export const prospectCities = Array.from(
-  new Set(prospects.map((p) => p.city).filter(Boolean) as string[])
-).sort();

@@ -1,27 +1,46 @@
-import { Plus, SlidersHorizontal } from "lucide-react";
-import { KanbanBoard } from "@/components/kanban";
 import { PageHeader } from "@/components/ui";
+import { PipelineBoard } from "@/components/kanban";
+import { loadContacts } from "@/lib/crm";
 
-export default function OpportunitiesPage() {
+export const dynamic = "force-dynamic";
+
+const ENGAGED = ["a_qualifier", "contacte", "en_discussion", "gagne", "perdu"];
+
+export default async function OpportunitiesPage() {
+  const { prospects, live } = await loadContacts();
+  const engaged = prospects.filter((p) => ENGAGED.includes(p.status));
+
   return (
     <div>
       <PageHeader
-        title="Opportunities"
-        subtitle="Drag deals across stages to update your pipeline."
+        title="Pipeline"
+        subtitle="Glissez les contacts entre les étapes pour faire avancer le pipeline."
         action={
-          <div className="flex items-center gap-2">
-            <button className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/5 bg-ink-800/60 px-3 text-sm text-slate-300 transition hover:text-white">
-              <SlidersHorizontal className="h-4 w-4" />
-              Filters
-            </button>
-            <button className="inline-flex h-9 items-center gap-2 rounded-lg bg-gradient-to-br from-brand-500 to-brand-600 px-3 text-sm font-medium text-white shadow-glow transition hover:brightness-110">
-              <Plus className="h-4 w-4" />
-              Add deal
-            </button>
-          </div>
+          <span
+            className="chip"
+            style={{
+              color: live ? "#10b981" : "#f59e0b",
+              background: live ? "#10b9811a" : "#f59e0b1a",
+            }}
+          >
+            {live ? "Live · Supabase" : "Supabase non connecté"}
+          </span>
         }
       />
-      <KanbanBoard />
+      {engaged.length === 0 ? (
+        <div className="card p-10 text-center">
+          <p className="text-sm text-slate-400">
+            Aucun contact engagé pour l&apos;instant.
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Passez des appels depuis la page <span className="text-slate-300">Appels</span>{" "}
+            — dès qu&apos;un contact est qualifié, à rappeler ou en discussion, il
+            apparaît ici.
+          </p>
+        </div>
+      ) : (
+        <PipelineBoard prospects={engaged} />
+      )}
     </div>
   );
 }

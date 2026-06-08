@@ -2,12 +2,12 @@ import { Users, MailCheck, PhoneCall, Flame, Database } from "lucide-react";
 import { PageHeader } from "@/components/ui";
 import { ProspectsView } from "@/components/prospects-view";
 import { prospectStats } from "@/lib/prospects";
-import { loadProspects } from "@/lib/prospects-source";
+import { loadContacts } from "@/lib/crm";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProspectsPage() {
-  const { prospects, live } = await loadProspects();
+  const { prospects, live } = await loadContacts();
   const s = prospectStats(prospects);
   const stats = [
     { label: "Prospects", value: s.total, icon: Users, color: "#6366f1" },

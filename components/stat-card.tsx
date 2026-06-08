@@ -8,6 +8,10 @@ import {
   DollarSign,
   Trophy,
   Percent,
+  Users,
+  Mail,
+  PhoneCall,
+  CalendarClock,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -17,6 +21,10 @@ const icons = {
   dollar: DollarSign,
   trophy: Trophy,
   percent: Percent,
+  users: Users,
+  mail: Mail,
+  phone: PhoneCall,
+  callback: CalendarClock,
 } satisfies Record<string, LucideIcon>;
 
 export type StatIcon = keyof typeof icons;
