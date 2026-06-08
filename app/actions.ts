@@ -11,6 +11,7 @@ import {
   type CrmStatus,
 } from "@/lib/crm-meta";
 import type { GroupRules } from "@/lib/groups";
+import { getPreset } from "@/lib/lexora-emails";
 
 export interface ActionResult {
   ok: boolean;
@@ -114,6 +115,7 @@ async function sendToContact(
     contactId: string;
     subject: string;
     body: string;
+    html?: string;
     channel?: string;
     campaignId?: string | null;
   }
@@ -159,6 +161,7 @@ async function sendToContact(
     to: contact.email,
     subject: item.subject,
     text: item.body,
+    html: item.html,
   });
 
   await supabase.from("crm_activities").insert({
@@ -202,6 +205,7 @@ export async function sendEmailToContact(item: {
   contactId: string;
   subject: string;
   body: string;
+  html?: string;
   channel?: string;
   campaignId?: string | null;
 }): Promise<EmailSendResult> {
@@ -222,6 +226,7 @@ export async function sendBatchEmails(
     contactId: string;
     subject: string;
     body: string;
+    html?: string;
     channel?: string;
     campaignId?: string | null;
   }[]
@@ -380,7 +385,13 @@ export async function deleteCampaign(id: string): Promise<ActionResult> {
  */
 export async function launchEmailCampaign(
   campaignId: string,
-  items: { contactId: string; subject: string; body: string; channel?: string }[]
+  items: {
+    contactId: string;
+    subject: string;
+    body: string;
+    html?: string;
+    channel?: string;
+  }[]
 ): Promise<{ ok: boolean; results: EmailSendResult[]; error?: string }> {
   const supabase = getServerSupabase();
   if (!supabase)
@@ -393,4 +404,56 @@ export async function launchEmailCampaign(
 
   const tagged = items.map((i) => ({ ...i, campaignId }));
   return sendBatchEmails(tagged);
+}
+
+/**
+ * Send a one-off test of a campaign's email to an arbitrary address (e.g. the
+ * owner) for visual validation before a mass send. Resolves the campaign
+ * template (incl. presets) and personalizes with neutral sample values.
+ */
+export async function sendCampaignTest(
+  campaignId: string,
+  toEmail: string
+): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  if (!toEmail || !toEmail.includes("@"))
+    return { ok: false, error: "Adresse email de test invalide." };
+
+  const { data, error } = await supabase
+    .from("crm_campaigns")
+    .select("template")
+    .eq("id", campaignId)
+    .maybeSingle();
+  if (error || !data) return { ok: false, error: "Campagne introuvable." };
+
+  const template = (data.template ?? {}) as {
+    preset?: string;
+    subject?: string;
+    body?: string;
+    html?: string;
+  };
+  const preset = getPreset(template.preset);
+  const subjectRaw = template.subject ?? preset?.subject ?? "Test campagne";
+  const htmlRaw = template.html ?? preset?.html;
+  const textRaw = template.body ?? preset?.text ?? "Test";
+
+  // Neutral personalization (no real contact): drop merge fields gracefully.
+  const fill = (s: string) =>
+    s
+      .replaceAll("{{prenom}}", "")
+      .replaceAll("{{nom}}", "")
+      .replaceAll("{{fonction}}", "votre fonction")
+      .replaceAll("{{entreprise}}", "votre entreprise")
+      .replaceAll("{{ville}}", "Maurice")
+      .replace(/Bonjour\s+,/g, "Bonjour,");
+
+  const sent = await sendEmail({
+    to: toEmail,
+    subject: `[TEST] ${fill(subjectRaw)}`,
+    text: fill(textRaw),
+    html: htmlRaw ? fill(htmlRaw) : undefined,
+  });
+  if (!sent.ok) return { ok: false, error: sent.error };
+  return { ok: true };
 }
