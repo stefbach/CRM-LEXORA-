@@ -59,20 +59,20 @@ export function fullName(p: Prospect) {
   return `${p.firstName} ${p.lastName}`.trim();
 }
 
-export function prospectStats() {
-  const total = prospects.length;
-  const withEmail = prospects.filter((p) => p.email).length;
-  const withPhone = prospects.filter((p) => p.phone).length;
-  const verified = prospects.filter((p) => p.emailStatus === "Vérifié").length;
+export function prospectStats(list: Prospect[] = prospects) {
+  const total = list.length;
+  const withEmail = list.filter((p) => p.email).length;
+  const withPhone = list.filter((p) => p.phone).length;
+  const verified = list.filter((p) => p.emailStatus === "Vérifié").length;
 
   const byChannel = (Object.keys(channelMeta) as Channel[]).map((ch) => ({
     channel: ch,
     label: channelMeta[ch].short,
     color: channelMeta[ch].color,
-    count: prospects.filter((p) => p.channel === ch).length,
+    count: list.filter((p) => p.channel === ch).length,
   }));
 
-  const hot = prospects.filter(
+  const hot = list.filter(
     (p) => p.priority === "A+" || p.priority === "A"
   ).length;
 

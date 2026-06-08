@@ -1,10 +1,14 @@
-import { Users, MailCheck, PhoneCall, Flame } from "lucide-react";
+import { Users, MailCheck, PhoneCall, Flame, Database } from "lucide-react";
 import { PageHeader } from "@/components/ui";
 import { ProspectsView } from "@/components/prospects-view";
 import { prospectStats } from "@/lib/prospects";
+import { loadProspects } from "@/lib/prospects-source";
 
-export default function ProspectsPage() {
-  const s = prospectStats();
+export const dynamic = "force-dynamic";
+
+export default async function ProspectsPage() {
+  const { prospects, live } = await loadProspects();
+  const s = prospectStats(prospects);
   const stats = [
     { label: "Prospects", value: s.total, icon: Users, color: "#6366f1" },
     { label: "Emails vérifiés", value: s.verified, icon: MailCheck, color: "#10b981" },
@@ -17,6 +21,23 @@ export default function ProspectsPage() {
       <PageHeader
         title="Prospects"
         subtitle="Base consolidée Maurice — emails et scripts d'appel personnalisés en un clic."
+        action={
+          <span
+            className="chip"
+            style={{
+              color: live ? "#10b981" : "#94a3b8",
+              background: live ? "#10b9811a" : "#94a3b81a",
+            }}
+            title={
+              live
+                ? "Données lues en direct depuis Supabase"
+                : "Données embarquées (Supabase non configuré)"
+            }
+          >
+            <Database className="h-3 w-3" />
+            {live ? "Live · Supabase" : "Démo · embarqué"}
+          </span>
+        }
       />
 
       <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -39,7 +60,7 @@ export default function ProspectsPage() {
         })}
       </div>
 
-      <ProspectsView />
+      <ProspectsView prospects={prospects} />
     </div>
   );
 }

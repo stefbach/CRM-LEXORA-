@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { Search, Mail, Phone, Linkedin, Filter } from "lucide-react";
 import {
-  getAllProspects,
   channelMeta,
   priorityMeta,
   fullName,
@@ -16,8 +15,8 @@ import { ProspectDrawer } from "@/components/prospect-drawer";
 const channels = Object.keys(channelMeta) as Channel[];
 const priorities = ["A+", "A", "B", "Direct"];
 
-export function ProspectsView() {
-  const all = getAllProspects();
+export function ProspectsView({ prospects }: { prospects: Prospect[] }) {
+  const all = prospects;
   const [q, setQ] = useState("");
   const [channel, setChannel] = useState<Channel | "all">("all");
   const [priority, setPriority] = useState<string | "all">("all");
