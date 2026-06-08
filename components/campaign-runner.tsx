@@ -22,14 +22,21 @@ import {
 } from "@/lib/prospects";
 import { statusMeta } from "@/lib/crm-meta";
 import { emailTemplates, personalize } from "@/lib/templates";
+import { getPreset } from "@/lib/lexora-emails";
 import { Avatar } from "@/components/ui";
 import { ProspectDrawer } from "@/components/prospect-drawer";
 import {
   launchEmailCampaign,
   setCampaignStatus,
   updateCampaign,
+  sendCampaignTest,
   type EmailSendResult,
 } from "@/app/actions";
+
+// personalize + tidy the empty-name greeting ("Bonjour ," -> "Bonjour,")
+function personalizeEmail(tpl: string, p: Prospect): string {
+  return personalize(tpl, p).replace(/Bonjour\s+,/g, "Bonjour,");
+}
 
 type Status = "draft" | "active" | "paused" | "done";
 
@@ -96,7 +103,7 @@ export function CampaignEmailRunner({
   campaignId: string;
   members: Prospect[];
   doneContactIds: string[];
-  template: { subject?: string; body?: string };
+  template: { subject?: string; body?: string; preset?: string; html?: string };
   configured: boolean;
 }) {
   const done = useMemo(() => new Set(doneContactIds), [doneContactIds]);
@@ -107,8 +114,16 @@ export function CampaignEmailRunner({
   const seedChannel: Channel = recipients[0]?.channel ?? "pme";
   const seed = emailTemplates[seedChannel][0];
 
-  const [subject, setSubject] = useState(template.subject ?? seed.subject);
-  const [body, setBody] = useState(template.body ?? seed.body);
+  // HTML preset mode (rich, designed email) vs. plain-text mode (editable).
+  const preset = getPreset(template.preset);
+  const htmlTemplate = template.html ?? preset?.html ?? "";
+  const isHtml = Boolean(htmlTemplate);
+  const textFallback = template.body ?? preset?.text ?? seed.body;
+
+  const [subject, setSubject] = useState(
+    template.subject ?? preset?.subject ?? seed.subject
+  );
+  const [body, setBody] = useState(textFallback);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(recipients.filter((r) => !done.has(r.id)).map((r) => r.id))
@@ -116,6 +131,8 @@ export function CampaignEmailRunner({
   const [pending, start] = useTransition();
   const [results, setResults] = useState<EmailSendResult[] | null>(null);
   const [savedMsg, setSavedMsg] = useState(false);
+  const [testEmail, setTestEmail] = useState("");
+  const [testMsg, setTestMsg] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -139,10 +156,25 @@ export function CampaignEmailRunner({
   const allSel = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
 
   function saveTemplate() {
+    const tpl = isHtml
+      ? { preset: template.preset, html: template.html, subject }
+      : { subject, body };
     start(async () => {
-      await updateCampaign(campaignId, { template: { subject, body } });
+      await updateCampaign(campaignId, { template: tpl });
       setSavedMsg(true);
       setTimeout(() => setSavedMsg(false), 1500);
+    });
+  }
+
+  function sendTest() {
+    setTestMsg(null);
+    if (!testEmail.includes("@")) {
+      setTestMsg("Adresse invalide.");
+      return;
+    }
+    start(async () => {
+      const r = await sendCampaignTest(campaignId, testEmail);
+      setTestMsg(r.ok ? "Test envoyé ✓" : r.error ?? "Échec.");
     });
   }
 
@@ -151,8 +183,9 @@ export function CampaignEmailRunner({
       .filter((r) => selected.has(r.id))
       .map((p) => ({
         contactId: p.id,
-        subject: personalize(subject, p),
-        body: personalize(body, p),
+        subject: personalizeEmail(subject, p),
+        body: personalizeEmail(body, p),
+        html: isHtml ? personalizeEmail(htmlTemplate, p) : undefined,
         channel: p.channel,
       }));
     if (items.length === 0) return;
@@ -191,23 +224,30 @@ export function CampaignEmailRunner({
               className="w-full rounded-lg border border-white/5 bg-ink-800/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500/40"
             />
           </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
-              Message (variables {"{{prenom}} {{entreprise}} {{ville}}"})
-            </span>
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={12}
-              className="w-full resize-none rounded-lg border border-white/5 bg-ink-800/60 px-3 py-2 text-sm leading-relaxed text-slate-100 outline-none focus:border-brand-500/40"
-            />
-          </label>
+          {isHtml ? (
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.05] px-3 py-2 text-xs text-slate-300">
+              ✦ Email HTML « LEXORA » — design fixe, aperçu ci-dessous. La
+              personnalisation ({"{{prenom}}"}) est appliquée à l&apos;envoi.
+            </div>
+          ) : (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Message (variables {"{{prenom}} {{entreprise}} {{ville}}"})
+              </span>
+              <textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                rows={12}
+                className="w-full resize-none rounded-lg border border-white/5 bg-ink-800/60 px-3 py-2 text-sm leading-relaxed text-slate-100 outline-none focus:border-brand-500/40"
+              />
+            </label>
+          )}
           <button
             onClick={saveTemplate}
             className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-ink-800/60 px-3 py-1.5 text-xs text-slate-300 hover:text-white"
           >
             <Save className="h-3.5 w-3.5" />
-            {savedMsg ? "Modèle enregistré ✓" : "Enregistrer le modèle"}
+            {savedMsg ? "Objet enregistré ✓" : "Enregistrer le modèle"}
           </button>
         </div>
 
@@ -217,11 +257,20 @@ export function CampaignEmailRunner({
               Aperçu — {fullName(preview)}
             </p>
             <p className="text-sm font-medium text-white">
-              {personalize(subject, preview)}
+              {personalizeEmail(subject, preview)}
             </p>
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-300">
-              {personalize(body, preview)}
-            </p>
+            {isHtml ? (
+              <iframe
+                title="Aperçu email"
+                className="mt-3 h-[520px] w-full rounded-lg border border-white/10 bg-white"
+                sandbox=""
+                srcDoc={personalizeEmail(htmlTemplate, preview)}
+              />
+            ) : (
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-300">
+                {personalizeEmail(body, preview)}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -290,6 +339,36 @@ export function CampaignEmailRunner({
           </div>
 
           <div className="border-t border-white/5 p-3">
+            <div className="mb-3 rounded-lg border border-white/5 bg-ink-800/40 p-2.5">
+              <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                Tester avant envoi
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={testEmail}
+                  onChange={(e) => setTestEmail(e.target.value)}
+                  placeholder="vous@email.com"
+                  className="h-8 flex-1 rounded-md border border-white/5 bg-ink-900/60 px-2 text-xs text-slate-200 outline-none focus:border-brand-500/40"
+                />
+                <button
+                  onClick={sendTest}
+                  disabled={pending || !testEmail}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/10 bg-ink-800/60 px-2.5 text-xs text-slate-300 hover:text-white disabled:opacity-50"
+                >
+                  <Send className="h-3 w-3" /> Test
+                </button>
+              </div>
+              {testMsg && (
+                <p
+                  className={`mt-1.5 text-[11px] ${
+                    testMsg.includes("✓") ? "text-emerald-400" : "text-amber-400"
+                  }`}
+                >
+                  {testMsg}
+                </p>
+              )}
+            </div>
             <button
               onClick={send}
               disabled={selected.size === 0 || pending}

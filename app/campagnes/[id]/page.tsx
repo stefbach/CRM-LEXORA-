@@ -131,7 +131,14 @@ export default async function CampaignDetailPage({
           campaignId={c.id}
           members={members}
           doneContactIds={doneContactIds}
-          template={c.template as { subject?: string; body?: string }}
+          template={
+            c.template as {
+              subject?: string;
+              body?: string;
+              preset?: string;
+              html?: string;
+            }
+          }
           configured={configured}
         />
       ) : (
