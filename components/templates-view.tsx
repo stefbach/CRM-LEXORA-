@@ -13,6 +13,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { channelMeta, type Channel } from "@/lib/prospects";
+import { buildEmailModels, type EmailModel } from "@/lib/email-models";
 import type {
   CustomEmailTemplate,
   CustomScriptTemplate,
@@ -25,6 +26,17 @@ import {
 } from "@/app/actions";
 
 const channels = Object.keys(channelMeta) as Channel[];
+
+// Replace merge fields with neutral sample values for a read-only preview.
+function sampleFill(s: string): string {
+  return s
+    .replaceAll("{{prenom}}", "Marie")
+    .replaceAll("{{nom}}", "Martin")
+    .replaceAll("{{fonction}}", "Directrice")
+    .replaceAll("{{entreprise}}", "votre entreprise")
+    .replaceAll("{{ville}}", "Port-Louis")
+    .replace(/Bonjour\s+,/g, "Bonjour,");
+}
 const MERGE_HINT = "Variables : {{prenom}} {{nom}} {{fonction}} {{entreprise}} {{ville}} {{moi}}";
 
 type EmailDraft = {
@@ -52,9 +64,25 @@ export function TemplatesView({
   const [pending, start] = useTransition();
   const [emailDraft, setEmailDraft] = useState<EmailDraft | null>(null);
   const [scriptDraft, setScriptDraft] = useState<ScriptDraft | null>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+
+  // Built-in, ready-to-use email models (LEXORA preset first, then per-channel).
+  const builtinEmails = buildEmailModels([]);
 
   function refresh() {
     router.refresh();
+  }
+
+  function duplicate(m: EmailModel) {
+    start(async () => {
+      await createTemplate({
+        kind: "email",
+        name: `${m.label} (copie)`,
+        subject: m.subject,
+        body: m.body,
+      });
+      refresh();
+    });
   }
 
   function saveEmail() {
@@ -127,6 +155,67 @@ export function TemplatesView({
           />
         )}
 
+        {/* Built-in models — ready to use in any campaign (LEXORA first) */}
+        <p className="mb-2 text-[11px] font-medium uppercase tracking-widest text-slate-600">
+          Modèles intégrés · prêts à l&apos;emploi
+        </p>
+        <div className="mb-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+          {builtinEmails.map((m, i) => (
+            <div
+              key={m.id}
+              className={`card p-4 ${m.html ? "border-emerald-500/25" : ""}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-white">
+                    {i === 0 && (
+                      <span className="mr-1.5 rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                        1ᵉʳ
+                      </span>
+                    )}
+                    {m.label}
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-slate-500">
+                    {m.subject}
+                  </p>
+                </div>
+                {m.html && (
+                  <span className="chip shrink-0 bg-emerald-500/15 text-emerald-300">
+                    HTML
+                  </span>
+                )}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {m.html && (
+                  <IconBtn
+                    onClick={() =>
+                      setPreviewId(previewId === m.id ? null : m.id)
+                    }
+                    icon={Mail}
+                    label={previewId === m.id ? "Masquer" : "Aperçu"}
+                  />
+                )}
+                <IconBtn
+                  onClick={() => duplicate(m)}
+                  icon={Plus}
+                  label="Dupliquer pour personnaliser"
+                />
+              </div>
+              {m.html && previewId === m.id && (
+                <iframe
+                  title={`Aperçu ${m.label}`}
+                  className="mt-3 h-[460px] w-full rounded-lg border border-white/10 bg-white"
+                  sandbox=""
+                  srcDoc={sampleFill(m.htmlBody ?? "")}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+
+        <p className="mb-2 text-[11px] font-medium uppercase tracking-widest text-slate-600">
+          Mes modèles
+        </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {emails.map((e) => (
             <div key={e.id} className="card p-4">
