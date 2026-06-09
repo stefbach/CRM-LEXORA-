@@ -20,6 +20,7 @@ import {
   channelMeta,
   priorityMeta,
   fullName,
+  type Channel,
 } from "@/lib/prospects";
 import {
   callOutcomes,
@@ -33,8 +34,23 @@ import {
   personalize,
   buildMailto,
 } from "@/lib/templates";
+import { buildEmailModels } from "@/lib/email-models";
+import type {
+  CustomEmailTemplate,
+  CustomScriptTemplate,
+  ScriptSection,
+} from "@/lib/crm";
 import { Avatar } from "@/components/ui";
-import { recordCall, sendEmailToContact } from "@/app/actions";
+import {
+  recordCall,
+  sendEmailToContact,
+  listTemplates,
+} from "@/app/actions";
+
+// personalize + tidy the empty-name greeting ("Bonjour ," -> "Bonjour,")
+function personalizeEmail(tpl: string, p: Prospect): string {
+  return personalize(tpl, p).replace(/Bonjour\s+,/g, "Bonjour,");
+}
 
 function CopyButton({ text, label = "Copier" }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
@@ -73,10 +89,26 @@ export function ProspectDrawer({
   campaignId?: string | null;
 }) {
   const [tab, setTab] = useState<"email" | "call">(initialTab);
+  const [customEmails, setCustomEmails] = useState<CustomEmailTemplate[]>([]);
+  const [customScripts, setCustomScripts] = useState<CustomScriptTemplate[]>([]);
 
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab, prospect]);
+
+  // Load the user's custom models when the drawer opens.
+  useEffect(() => {
+    if (!prospect) return;
+    let active = true;
+    listTemplates().then((t) => {
+      if (!active) return;
+      setCustomEmails(t.emails);
+      setCustomScripts(t.scripts);
+    });
+    return () => {
+      active = false;
+    };
+  }, [prospect]);
 
   if (!prospect) return null;
 
@@ -108,9 +140,18 @@ export function ProspectDrawer({
 
         <div className="flex-1 overflow-y-auto p-5">
           {tab === "email" ? (
-            <EmailComposer prospect={prospect} campaignId={campaignId} />
+            <EmailComposer
+              prospect={prospect}
+              campaignId={campaignId}
+              customEmails={customEmails}
+            />
           ) : (
-            <CallPanel prospect={prospect} campaignId={campaignId} />
+            <CallPanel
+              prospect={prospect}
+              campaignId={campaignId}
+              customScripts={customScripts}
+              onGoToEmail={() => setTab("email")}
+            />
           )}
         </div>
       </aside>
@@ -228,29 +269,44 @@ function DrawerHeader({
 function EmailComposer({
   prospect,
   campaignId = null,
+  customEmails = [],
 }: {
   prospect: Prospect;
   campaignId?: string | null;
+  customEmails?: CustomEmailTemplate[];
 }) {
-  const templates = emailTemplates[prospect.channel];
-  const [templateId, setTemplateId] = useState(templates[0].id);
-  const template = useMemo(
-    () => templates.find((t) => t.id === templateId) ?? templates[0],
-    [templates, templateId]
+  const models = useMemo(
+    () => buildEmailModels(customEmails),
+    [customEmails]
+  );
+  // Default to the per-channel text intro for this prospect.
+  const defaultId = `text:${emailTemplates[prospect.channel][0].id}`;
+  const [modelId, setModelId] = useState(defaultId);
+  const model = useMemo(
+    () => models.find((m) => m.id === modelId) ?? models[0],
+    [models, modelId]
   );
 
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [htmlBody, setHtmlBody] = useState("");
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    setSubject(personalize(template.subject, prospect));
-    setBody(personalize(template.body, prospect));
+    setSubject(personalizeEmail(model.subject, prospect));
+    setBody(personalizeEmail(model.body, prospect));
+    setHtmlBody(model.html ? personalizeEmail(model.htmlBody ?? "", prospect) : "");
     setMsg(null);
-  }, [template, prospect]);
+  }, [model, prospect]);
 
-  const mailto = buildMailto(prospect, { ...template, subject, body });
+  const isHtml = Boolean(htmlBody);
+  const mailto = buildMailto(prospect, {
+    id: model.id,
+    name: model.label,
+    subject,
+    body,
+  });
 
   function handleSend() {
     setMsg(null);
@@ -259,6 +315,7 @@ function EmailComposer({
         contactId: prospect.id,
         subject,
         body,
+        html: isHtml ? htmlBody : undefined,
         channel: prospect.channel,
         campaignId,
       });
@@ -275,6 +332,30 @@ function EmailComposer({
       {prospect.optOut && (
         <div className="rounded-xl border border-red-500/20 bg-red-500/[0.06] p-3 text-xs text-red-300">
           Ce contact est désinscrit (opt-out) — l'envoi sera bloqué.
+        </div>
+      )}
+
+      <label className="block">
+        <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+          Modèle d&apos;email
+        </span>
+        <select
+          value={modelId}
+          onChange={(e) => setModelId(e.target.value)}
+          className="w-full rounded-lg border border-white/5 bg-ink-800/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500/40"
+        >
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {isHtml && (
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.05] px-3 py-2 text-xs text-slate-300">
+          ✦ Modèle HTML — design fixe envoyé tel quel (personnalisé). Le texte
+          ci-dessous sert d&apos;aperçu / version texte.
         </div>
       )}
 
@@ -353,11 +434,31 @@ function EmailComposer({
 function CallPanel({
   prospect,
   campaignId = null,
+  customScripts = [],
+  onGoToEmail,
 }: {
   prospect: Prospect;
   campaignId?: string | null;
+  customScripts?: CustomScriptTemplate[];
+  onGoToEmail?: () => void;
 }) {
-  const script = callScripts[prospect.channel];
+  // Built-in per-channel scripts + the user's custom scripts.
+  const scripts = useMemo(() => {
+    const builtin = (Object.keys(callScripts) as Channel[]).map((ch) => ({
+      id: `builtin:${ch}`,
+      name: `${callScripts[ch].name} · ${channelMeta[ch].label}`,
+      sections: callScripts[ch].sections as ScriptSection[],
+    }));
+    const custom = customScripts.map((s) => ({
+      id: `custom:${s.id}`,
+      name: `★ ${s.name}`,
+      sections: s.sections,
+    }));
+    return [...builtin, ...custom];
+  }, [customScripts]);
+
+  const [scriptId, setScriptId] = useState(`builtin:${prospect.channel}`);
+  const script = scripts.find((s) => s.id === scriptId) ?? scripts[0];
   const fullScript = script.sections
     .map((s) => `${s.label} :\n${personalize(s.text, prospect)}`)
     .join("\n\n");
@@ -404,6 +505,23 @@ function CallPanel({
 
   return (
     <div className="space-y-5">
+      <label className="block">
+        <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+          Script d&apos;appel
+        </span>
+        <select
+          value={scriptId}
+          onChange={(e) => setScriptId(e.target.value)}
+          className="w-full rounded-lg border border-white/5 bg-ink-800/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500/40"
+        >
+          {scripts.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      </label>
+
       <div className="flex flex-wrap items-center gap-2">
         <a
           href={
@@ -422,6 +540,14 @@ function CallPanel({
           {prospect.phone ? `Appeler ${prospect.phone}` : "Téléphone indisponible"}
         </a>
         <CopyButton text={fullScript} label="Copier le script" />
+        {onGoToEmail && prospect.email && (
+          <button
+            onClick={onGoToEmail}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-brand-500/30 bg-brand-500/10 px-2.5 py-1.5 text-xs font-medium text-brand-200 transition hover:bg-brand-500/20"
+          >
+            <Mail className="h-3.5 w-3.5" /> Email dans la foulée
+          </button>
+        )}
       </div>
 
       {/* Outcome capture */}

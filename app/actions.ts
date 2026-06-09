@@ -12,6 +12,7 @@ import {
 } from "@/lib/crm-meta";
 import type { GroupRules } from "@/lib/groups";
 import { getPreset } from "@/lib/lexora-emails";
+import { loadTemplates, type ScriptSection } from "@/lib/crm";
 
 export interface ActionResult {
   ok: boolean;
@@ -27,6 +28,7 @@ function revalidateCrm() {
   revalidatePath("/activities");
   revalidatePath("/groupes");
   revalidatePath("/campagnes");
+  revalidatePath("/modeles");
 }
 
 // ---------------------------------------------------------------------------
@@ -413,30 +415,42 @@ export async function launchEmailCampaign(
  */
 export async function sendCampaignTest(
   campaignId: string,
-  toEmail: string
+  toEmail: string,
+  override?: { subject?: string; text?: string; html?: string }
 ): Promise<ActionResult> {
   const supabase = getServerSupabase();
   if (!supabase) return { ok: false, error: "Supabase non configuré." };
   if (!toEmail || !toEmail.includes("@"))
     return { ok: false, error: "Adresse email de test invalide." };
 
-  const { data, error } = await supabase
-    .from("crm_campaigns")
-    .select("template")
-    .eq("id", campaignId)
-    .maybeSingle();
-  if (error || !data) return { ok: false, error: "Campagne introuvable." };
+  let subjectRaw: string;
+  let htmlRaw: string | undefined;
+  let textRaw: string;
 
-  const template = (data.template ?? {}) as {
-    preset?: string;
-    subject?: string;
-    body?: string;
-    html?: string;
-  };
-  const preset = getPreset(template.preset);
-  const subjectRaw = template.subject ?? preset?.subject ?? "Test campagne";
-  const htmlRaw = template.html ?? preset?.html;
-  const textRaw = template.body ?? preset?.text ?? "Test";
+  if (override?.subject || override?.text || override?.html) {
+    // Test the model currently on screen (may differ from the saved template).
+    subjectRaw = override.subject ?? "Test campagne";
+    htmlRaw = override.html;
+    textRaw = override.text ?? "Test";
+  } else {
+    const { data, error } = await supabase
+      .from("crm_campaigns")
+      .select("template")
+      .eq("id", campaignId)
+      .maybeSingle();
+    if (error || !data) return { ok: false, error: "Campagne introuvable." };
+
+    const template = (data.template ?? {}) as {
+      preset?: string;
+      subject?: string;
+      body?: string;
+      html?: string;
+    };
+    const preset = getPreset(template.preset);
+    subjectRaw = template.subject ?? preset?.subject ?? "Test campagne";
+    htmlRaw = template.html ?? preset?.html;
+    textRaw = template.body ?? preset?.text ?? "Test";
+  }
 
   // Neutral personalization (no real contact): drop merge fields gracefully.
   const fill = (s: string) =>
@@ -455,5 +469,72 @@ export async function sendCampaignTest(
     html: htmlRaw ? fill(htmlRaw) : undefined,
   });
   if (!sent.ok) return { ok: false, error: sent.error };
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Templates — CRUD for custom email models & call scripts (crm_templates)
+// ---------------------------------------------------------------------------
+
+export async function listTemplates() {
+  return loadTemplates();
+}
+
+export async function createTemplate(input: {
+  kind: "email" | "script";
+  name: string;
+  channel?: string | null;
+  subject?: string | null;
+  body?: string | null;
+  sections?: ScriptSection[] | null;
+}): Promise<ActionResult & { id?: string }> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  if (!input.name?.trim()) return { ok: false, error: "Nom requis." };
+
+  const { data, error } = await supabase
+    .from("crm_templates")
+    .insert({
+      kind: input.kind,
+      name: input.name.trim(),
+      channel: input.channel ?? null,
+      subject: input.subject ?? null,
+      body: input.body ?? null,
+      sections: input.sections ?? null,
+    })
+    .select("id")
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
+  return { ok: true, id: data?.id };
+}
+
+export async function updateTemplate(
+  id: string,
+  patch: {
+    name?: string;
+    channel?: string | null;
+    subject?: string | null;
+    body?: string | null;
+    sections?: ScriptSection[] | null;
+  }
+): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  const { error } = await supabase
+    .from("crm_templates")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
+  return { ok: true };
+}
+
+export async function deleteTemplate(id: string): Promise<ActionResult> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { ok: false, error: "Supabase non configuré." };
+  const { error } = await supabase.from("crm_templates").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidateCrm();
   return { ok: true };
 }

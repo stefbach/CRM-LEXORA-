@@ -22,7 +22,11 @@ import {
 } from "@/lib/prospects";
 import { statusMeta } from "@/lib/crm-meta";
 import { emailTemplates, personalize } from "@/lib/templates";
-import { getPreset } from "@/lib/lexora-emails";
+import {
+  buildEmailModels,
+  type EmailModel,
+  type CustomEmailModel,
+} from "@/lib/email-models";
 import { Avatar } from "@/components/ui";
 import { ProspectDrawer } from "@/components/prospect-drawer";
 import {
@@ -37,6 +41,7 @@ import {
 function personalizeEmail(tpl: string, p: Prospect): string {
   return personalize(tpl, p).replace(/Bonjour\s+,/g, "Bonjour,");
 }
+
 
 type Status = "draft" | "active" | "paused" | "done";
 
@@ -99,12 +104,14 @@ export function CampaignEmailRunner({
   doneContactIds,
   template,
   configured,
+  customEmailModels = [],
 }: {
   campaignId: string;
   members: Prospect[];
   doneContactIds: string[];
   template: { subject?: string; body?: string; preset?: string; html?: string };
   configured: boolean;
+  customEmailModels?: CustomEmailModel[];
 }) {
   const done = useMemo(() => new Set(doneContactIds), [doneContactIds]);
   const recipients = useMemo(
@@ -114,17 +121,54 @@ export function CampaignEmailRunner({
   const seedChannel: Channel = recipients[0]?.channel ?? "pme";
   const seed = emailTemplates[seedChannel][0];
 
-  // HTML preset mode (rich, designed email) vs. plain-text mode (editable).
-  const preset = getPreset(template.preset);
-  const htmlTemplate = template.html ?? preset?.html ?? "";
-  const isHtml = Boolean(htmlTemplate);
-  const textFallback = template.body ?? preset?.text ?? seed.body;
+  // ---- Available email models: presets + custom + per-channel text ----------
+  const models = useMemo<EmailModel[]>(() => {
+    const campaignCustom: EmailModel[] =
+      !template.preset && (template.subject || template.body)
+        ? [
+            {
+              id: "campaign",
+              label: "Modèle enregistré (cette campagne)",
+              html: false,
+              subject: template.subject ?? seed.subject,
+              body: template.body ?? seed.body,
+            },
+          ]
+        : [];
+    return [...campaignCustom, ...buildEmailModels(customEmailModels)];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customEmailModels]);
 
-  const [subject, setSubject] = useState(
-    template.subject ?? preset?.subject ?? seed.subject
-  );
-  const [body, setBody] = useState(textFallback);
+  const initialModelId = template.preset
+    ? `preset:${template.preset}`
+    : template.subject || template.body
+    ? "campaign"
+    : `text:${seed.id}`;
+  const initialModel = models.find((m) => m.id === initialModelId) ?? models[0];
+
+  const [modelId, setModelId] = useState(initialModel.id);
+  const [subject, setSubject] = useState(initialModel.subject);
+  const [body, setBody] = useState(initialModel.body);
+  const [htmlBody, setHtmlBody] = useState(initialModel.htmlBody ?? "");
+  const isHtml = Boolean(htmlBody);
+
+  function selectModel(id: string) {
+    const m = models.find((x) => x.id === id);
+    if (!m) return;
+    setModelId(id);
+    setSubject(m.subject);
+    setBody(m.body);
+    setHtmlBody(m.html ? m.htmlBody ?? "" : "");
+  }
+
   const [q, setQ] = useState("");
+  const [batchSize, setBatchSize] = useState(50);
+  const [localDone, setLocalDone] = useState<Set<string>>(new Set());
+  const doneAll = useMemo(() => {
+    const s = new Set<string>(done);
+    localDone.forEach((id) => s.add(id));
+    return s;
+  }, [done, localDone]);
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(recipients.filter((r) => !done.has(r.id)).map((r) => r.id))
   );
@@ -156,8 +200,8 @@ export function CampaignEmailRunner({
   const allSel = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
 
   function saveTemplate() {
-    const tpl = isHtml
-      ? { preset: template.preset, html: template.html, subject }
+    const tpl = modelId.startsWith("preset:")
+      ? { preset: modelId.slice("preset:".length), subject }
       : { subject, body };
     start(async () => {
       await updateCampaign(campaignId, { template: tpl });
@@ -173,26 +217,44 @@ export function CampaignEmailRunner({
       return;
     }
     start(async () => {
-      const r = await sendCampaignTest(campaignId, testEmail);
+      const r = await sendCampaignTest(campaignId, testEmail, {
+        subject,
+        text: body,
+        html: isHtml ? htmlBody : undefined,
+      });
       setTestMsg(r.ok ? "Test envoyé ✓" : r.error ?? "Échec.");
     });
   }
 
+  // Recipients still to send (selected, not already sent), in list order.
+  const queue = recipients.filter(
+    (r) => selected.has(r.id) && !doneAll.has(r.id)
+  );
+  const nextBatch = queue.slice(0, Math.max(1, batchSize));
+
   function send() {
-    const items = recipients
-      .filter((r) => selected.has(r.id))
-      .map((p) => ({
-        contactId: p.id,
-        subject: personalizeEmail(subject, p),
-        body: personalizeEmail(body, p),
-        html: isHtml ? personalizeEmail(htmlTemplate, p) : undefined,
-        channel: p.channel,
-      }));
-    if (items.length === 0) return;
+    if (nextBatch.length === 0) return;
+    const items = nextBatch.map((p) => ({
+      contactId: p.id,
+      subject: personalizeEmail(subject, p),
+      body: personalizeEmail(body, p),
+      html: isHtml ? personalizeEmail(htmlBody, p) : undefined,
+      channel: p.channel,
+    }));
+    const ids = nextBatch.map((p) => p.id);
     start(async () => {
       const r = await launchEmailCampaign(campaignId, items);
       setResults(r.results);
-      setSelected(new Set());
+      setLocalDone((prev) => {
+        const n = new Set(prev);
+        ids.forEach((id) => n.add(id));
+        return n;
+      });
+      setSelected((prev) => {
+        const n = new Set(prev);
+        ids.forEach((id) => n.delete(id));
+        return n;
+      });
     });
   }
 
@@ -216,6 +278,22 @@ export function CampaignEmailRunner({
         <div className="card space-y-3 p-4">
           <label className="block">
             <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+              Modèle d&apos;email
+            </span>
+            <select
+              value={modelId}
+              onChange={(e) => selectModel(e.target.value)}
+              className="w-full rounded-lg border border-white/5 bg-ink-800/60 px-3 py-2 text-sm text-slate-100 outline-none focus:border-brand-500/40"
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
               Objet
             </span>
             <input
@@ -226,8 +304,8 @@ export function CampaignEmailRunner({
           </label>
           {isHtml ? (
             <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.05] px-3 py-2 text-xs text-slate-300">
-              ✦ Email HTML « LEXORA » — design fixe, aperçu ci-dessous. La
-              personnalisation ({"{{prenom}}"}) est appliquée à l&apos;envoi.
+              ✦ Modèle HTML — design fixe, aperçu ci-dessous. La personnalisation
+              ({"{{prenom}}"}) est appliquée à l&apos;envoi.
             </div>
           ) : (
             <label className="block">
@@ -264,7 +342,7 @@ export function CampaignEmailRunner({
                 title="Aperçu email"
                 className="mt-3 h-[520px] w-full rounded-lg border border-white/10 bg-white"
                 sandbox=""
-                srcDoc={personalizeEmail(htmlTemplate, preview)}
+                srcDoc={personalizeEmail(htmlBody, preview)}
               />
             ) : (
               <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-300">
@@ -299,7 +377,7 @@ export function CampaignEmailRunner({
                 {allSel ? "Tout désélectionner" : "Tout sélectionner"}
               </button>
               <span className="text-slate-500">
-                {selected.size}/{recipients.length}
+                {selected.size} sél. · {doneAll.size} envoyés / {recipients.length}
               </span>
             </div>
           </div>
@@ -307,7 +385,7 @@ export function CampaignEmailRunner({
           <div className="max-h-[460px] flex-1 overflow-y-auto">
             {filtered.map((p) => {
               const ch = channelMeta[p.channel];
-              const isDone = done.has(p.id);
+              const isDone = doneAll.has(p.id);
               const checked = selected.has(p.id);
               return (
                 <button
@@ -369,11 +447,25 @@ export function CampaignEmailRunner({
                 </p>
               )}
             </div>
+            <div className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+              <span>Envoyer par lots de</span>
+              <select
+                value={batchSize}
+                onChange={(e) => setBatchSize(Number(e.target.value))}
+                className="rounded-md border border-white/10 bg-ink-800/60 px-2 py-1 text-xs text-slate-200 outline-none focus:border-brand-500/40"
+              >
+                {[10, 25, 50, 100, 200].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
             <button
               onClick={send}
-              disabled={selected.size === 0 || pending}
+              disabled={nextBatch.length === 0 || pending}
               className={`inline-flex w-full items-center justify-center gap-2 rounded-lg px-3.5 py-2.5 text-sm font-medium transition ${
-                selected.size > 0
+                nextBatch.length > 0
                   ? "bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-glow hover:brightness-110"
                   : "cursor-not-allowed bg-white/5 text-slate-500"
               }`}
@@ -383,8 +475,13 @@ export function CampaignEmailRunner({
               ) : (
                 <Send className="h-4 w-4" />
               )}
-              Envoyer ({selected.size})
+              Envoyer le lot ({nextBatch.length})
             </button>
+            {queue.length > nextBatch.length && (
+              <p className="mt-1.5 text-center text-[11px] text-slate-500">
+                {queue.length - nextBatch.length} en attente après ce lot
+              </p>
+            )}
             {results && (
               <div className="mt-3 space-y-1 text-xs">
                 <p className="text-emerald-400">{sentOk} envoyés</p>

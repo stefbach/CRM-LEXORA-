@@ -644,3 +644,72 @@ export async function loadCampaign(id: string): Promise<{
 
   return { campaign, members, doneContactIds };
 }
+
+// ---------------------------------------------------------------------------
+// Templates — user-created email models & call scripts (crm_templates)
+// ---------------------------------------------------------------------------
+
+export interface CustomEmailTemplate {
+  id: string;
+  name: string;
+  channel: string | null;
+  subject: string;
+  body: string;
+}
+
+export interface ScriptSection {
+  label: string;
+  text: string;
+}
+
+export interface CustomScriptTemplate {
+  id: string;
+  name: string;
+  channel: string | null;
+  sections: ScriptSection[];
+}
+
+interface TemplateRow {
+  id: string;
+  kind: "email" | "script";
+  name: string;
+  channel: string | null;
+  subject: string | null;
+  body: string | null;
+  sections: ScriptSection[] | null;
+}
+
+export async function loadTemplates(): Promise<{
+  emails: CustomEmailTemplate[];
+  scripts: CustomScriptTemplate[];
+}> {
+  const supabase = getServerSupabase();
+  if (!supabase) return { emails: [], scripts: [] };
+
+  const { data, error } = await supabase
+    .from("crm_templates")
+    .select("id,kind,name,channel,subject,body,sections")
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error || !data) return { emails: [], scripts: [] };
+  const rows = data as unknown as TemplateRow[];
+  const emails: CustomEmailTemplate[] = rows
+    .filter((r) => r.kind === "email")
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      channel: r.channel,
+      subject: r.subject ?? "",
+      body: r.body ?? "",
+    }));
+  const scripts: CustomScriptTemplate[] = rows
+    .filter((r) => r.kind === "script")
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      channel: r.channel,
+      sections: Array.isArray(r.sections) ? r.sections : [],
+    }));
+  return { emails, scripts };
+}
