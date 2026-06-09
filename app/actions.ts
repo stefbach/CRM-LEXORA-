@@ -413,30 +413,42 @@ export async function launchEmailCampaign(
  */
 export async function sendCampaignTest(
   campaignId: string,
-  toEmail: string
+  toEmail: string,
+  override?: { subject?: string; text?: string; html?: string }
 ): Promise<ActionResult> {
   const supabase = getServerSupabase();
   if (!supabase) return { ok: false, error: "Supabase non configuré." };
   if (!toEmail || !toEmail.includes("@"))
     return { ok: false, error: "Adresse email de test invalide." };
 
-  const { data, error } = await supabase
-    .from("crm_campaigns")
-    .select("template")
-    .eq("id", campaignId)
-    .maybeSingle();
-  if (error || !data) return { ok: false, error: "Campagne introuvable." };
+  let subjectRaw: string;
+  let htmlRaw: string | undefined;
+  let textRaw: string;
 
-  const template = (data.template ?? {}) as {
-    preset?: string;
-    subject?: string;
-    body?: string;
-    html?: string;
-  };
-  const preset = getPreset(template.preset);
-  const subjectRaw = template.subject ?? preset?.subject ?? "Test campagne";
-  const htmlRaw = template.html ?? preset?.html;
-  const textRaw = template.body ?? preset?.text ?? "Test";
+  if (override?.subject || override?.text || override?.html) {
+    // Test the model currently on screen (may differ from the saved template).
+    subjectRaw = override.subject ?? "Test campagne";
+    htmlRaw = override.html;
+    textRaw = override.text ?? "Test";
+  } else {
+    const { data, error } = await supabase
+      .from("crm_campaigns")
+      .select("template")
+      .eq("id", campaignId)
+      .maybeSingle();
+    if (error || !data) return { ok: false, error: "Campagne introuvable." };
+
+    const template = (data.template ?? {}) as {
+      preset?: string;
+      subject?: string;
+      body?: string;
+      html?: string;
+    };
+    const preset = getPreset(template.preset);
+    subjectRaw = template.subject ?? preset?.subject ?? "Test campagne";
+    htmlRaw = template.html ?? preset?.html;
+    textRaw = template.body ?? preset?.text ?? "Test";
+  }
 
   // Neutral personalization (no real contact): drop merge fields gracefully.
   const fill = (s: string) =>
