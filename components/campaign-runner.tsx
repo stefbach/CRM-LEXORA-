@@ -147,8 +147,11 @@ export function CampaignEmailRunner({
   const initialModel = models.find((m) => m.id === initialModelId) ?? models[0];
 
   const [modelId, setModelId] = useState(initialModel.id);
-  const [subject, setSubject] = useState(initialModel.subject);
-  const [body, setBody] = useState(initialModel.body);
+  // Honour a saved subject/body override on top of the model's defaults.
+  const [subject, setSubject] = useState(
+    template.subject ?? initialModel.subject
+  );
+  const [body, setBody] = useState(template.body ?? initialModel.body);
   const [htmlBody, setHtmlBody] = useState(initialModel.htmlBody ?? "");
   const isHtml = Boolean(htmlBody);
 
