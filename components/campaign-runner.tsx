@@ -22,7 +22,11 @@ import {
 } from "@/lib/prospects";
 import { statusMeta } from "@/lib/crm-meta";
 import { emailTemplates, personalize } from "@/lib/templates";
-import { getPreset, emailPresets } from "@/lib/lexora-emails";
+import {
+  buildEmailModels,
+  type EmailModel,
+  type CustomEmailModel,
+} from "@/lib/email-models";
 import { Avatar } from "@/components/ui";
 import { ProspectDrawer } from "@/components/prospect-drawer";
 import {
@@ -38,21 +42,6 @@ function personalizeEmail(tpl: string, p: Prospect): string {
   return personalize(tpl, p).replace(/Bonjour\s+,/g, "Bonjour,");
 }
 
-// Selectable email model: a rich HTML preset, or an editable per-channel text.
-type EmailModel = {
-  id: string;
-  label: string;
-  html: boolean;
-  subject: string;
-  body: string;
-  htmlBody?: string;
-};
-const presetLabels: Record<string, string> = {
-  "lexora-presentation": "Présentation LEXORA — complète (HTML)",
-};
-function presetLabel(key: string): string {
-  return presetLabels[key] ?? key;
-}
 
 type Status = "draft" | "active" | "paused" | "done";
 
@@ -115,12 +104,14 @@ export function CampaignEmailRunner({
   doneContactIds,
   template,
   configured,
+  customEmailModels = [],
 }: {
   campaignId: string;
   members: Prospect[];
   doneContactIds: string[];
   template: { subject?: string; body?: string; preset?: string; html?: string };
   configured: boolean;
+  customEmailModels?: CustomEmailModel[];
 }) {
   const done = useMemo(() => new Set(doneContactIds), [doneContactIds]);
   const recipients = useMemo(
@@ -130,45 +121,28 @@ export function CampaignEmailRunner({
   const seedChannel: Channel = recipients[0]?.channel ?? "pme";
   const seed = emailTemplates[seedChannel][0];
 
-  // ---- Available email models: HTML presets + per-channel text templates ----
+  // ---- Available email models: presets + custom + per-channel text ----------
   const models = useMemo<EmailModel[]>(() => {
-    const presets = Object.entries(emailPresets).map(([k, p]) => ({
-      id: `preset:${k}`,
-      label: presetLabel(k),
-      html: true,
-      subject: p.subject,
-      body: p.text,
-      htmlBody: p.html,
-    }));
-    const texts = (Object.keys(emailTemplates) as Channel[]).flatMap((ch) =>
-      emailTemplates[ch].map((t) => ({
-        id: `text:${t.id}`,
-        label: `${t.name} · ${channelMeta[ch].label}`,
-        html: false,
-        subject: t.subject,
-        body: t.body,
-      }))
-    );
-    const custom =
+    const campaignCustom: EmailModel[] =
       !template.preset && (template.subject || template.body)
         ? [
             {
-              id: "custom",
-              label: "Modèle enregistré (campagne)",
+              id: "campaign",
+              label: "Modèle enregistré (cette campagne)",
               html: false,
               subject: template.subject ?? seed.subject,
               body: template.body ?? seed.body,
             },
           ]
         : [];
-    return [...presets, ...custom, ...texts];
+    return [...campaignCustom, ...buildEmailModels(customEmailModels)];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [customEmailModels]);
 
   const initialModelId = template.preset
     ? `preset:${template.preset}`
     : template.subject || template.body
-    ? "custom"
+    ? "campaign"
     : `text:${seed.id}`;
   const initialModel = models.find((m) => m.id === initialModelId) ?? models[0];
 

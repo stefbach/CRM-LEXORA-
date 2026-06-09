@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Mail, PhoneCall, Users, Target, CheckCircle2 } from "lucide-react";
-import { loadCampaign } from "@/lib/crm";
+import { loadCampaign, loadTemplates } from "@/lib/crm";
 import { emailConfigured } from "@/lib/email";
 import {
   CampaignStatusControls,
@@ -27,6 +27,7 @@ export default async function CampaignDetailPage({
   const data = await loadCampaign(params.id);
   if (!data) notFound();
   const { campaign: c, members, doneContactIds } = data;
+  const { emails: customEmailModels } = await loadTemplates();
   const configured = emailConfigured();
   const st = statusLabel[c.status] ?? statusLabel.draft;
   const kindColor = c.kind === "email" ? "#06b6d4" : "#6366f1";
@@ -140,6 +141,7 @@ export default async function CampaignDetailPage({
             }
           }
           configured={configured}
+          customEmailModels={customEmailModels}
         />
       ) : (
         <CampaignCallRunner
